@@ -14,7 +14,6 @@ using System.Data.SQLite;
 using System.IO;
 using System.Text;
 using System.Xml;
-using MySqlX.XDevAPI.Common;
 
 namespace DAL
 {
