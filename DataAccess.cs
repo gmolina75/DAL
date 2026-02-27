@@ -10,10 +10,15 @@ using System.Data;
 using System.Data.Odbc;
 using System.Data.OleDb;
 using System.Data.SqlClient;
-using System.Data.SQLite;
 using System.IO;
 using System.Text;
 using System.Xml;
+using System.Data.SQLite;
+// para sqlite el unico nugget que dene instalar es System.Data.SQLite.Core. El otro System.Data.SQLite
+// es para usar el designer de visual studio y no es necesario para el funcionamiento del DAL
+//tambien deb ser agrgada en el proyecto si va a usar sqlite
+//proque sino no copia las libre x64 y x86 sqliteinterop.dll
+//a la carpeta de salida y da error al ejecutar el proyecto
 
 namespace DAL
 {
@@ -184,8 +189,8 @@ namespace DAL
 
         public static IDbConnection GetConnection(EnumProviders provider)
         {
-            try
-            {
+            //try
+            //{
                 switch (provider)
                 {
                     case EnumProviders.SQLClient:
@@ -220,13 +225,13 @@ namespace DAL
                     default:
                         return new SqlConnection();
                 }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-                return new SqlConnection();
+            //}
+            //catch (Exception ex)
+            //{
+            //    Console.WriteLine(ex.Message);
+            //    return new SqlConnection();
 
-            }
+            //}
 
         }
 
@@ -242,19 +247,21 @@ namespace DAL
                 else
                     con = GetConnection(provider);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
 
                 if (provider == EnumProviders.SQLClient)
                 {
                     con = new SqlConnection();
                 }
+                else
+                    throw ex;
             }
             //gm parametro dudoso no se de donde salio 2022-09-04
-            if (provider == EnumProviders.SQLClient)
-            {
-                strConnString = strConnString + ";App=" + provider.ToString() + " Provider";
-            }
+            //if (provider == EnumProviders.SQLClient)
+            //{
+            //    strConnString = strConnString + ";App=" + provider.ToString() + " Provider";
+            //}
             if (con != null)
                 con.ConnectionString = strConnString;
             return con;
