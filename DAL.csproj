@@ -1,5 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="Z:\Customers\Demo\4.1\web\ChatClon\packages\EntityFramework.6.5.2\build\EntityFramework.props" Condition="Exists('Z:\Customers\Demo\4.1\web\ChatClon\packages\EntityFramework.6.5.2\build\EntityFramework.props')" />
   <Import Project="packages\EntityFramework.6.5.1\build\EntityFramework.props" Condition="Exists('packages\EntityFramework.6.5.1\build\EntityFramework.props')" />
   <Import Project="Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\EntityFramework.6.4.4\build\EntityFramework.props" Condition="Exists('Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\EntityFramework.6.4.4\build\EntityFramework.props')" />
   <Import Project="Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\EntityFramework.6.4.0\build\EntityFramework.props" Condition="Exists('Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\EntityFramework.6.4.0\build\EntityFramework.props')" />
@@ -44,10 +45,10 @@
       <HintPath>Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\BouncyCastle.Cryptography.2.6.2\lib\net461\BouncyCastle.Cryptography.dll</HintPath>
     </Reference>
     <Reference Include="EntityFramework, Version=6.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089, processorArchitecture=MSIL">
-      <HintPath>packages\EntityFramework.6.5.1\lib\net45\EntityFramework.dll</HintPath>
+      <HintPath>Z:\Customers\Demo\4.1\web\ChatClon\packages\EntityFramework.6.5.2\lib\net45\EntityFramework.dll</HintPath>
     </Reference>
     <Reference Include="EntityFramework.SqlServer, Version=6.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089, processorArchitecture=MSIL">
-      <HintPath>packages\EntityFramework.6.5.1\lib\net45\EntityFramework.SqlServer.dll</HintPath>
+      <HintPath>Z:\Customers\Demo\4.1\web\ChatClon\packages\EntityFramework.6.5.2\lib\net45\EntityFramework.SqlServer.dll</HintPath>
     </Reference>
     <Reference Include="Google.Protobuf, Version=3.34.1.0, Culture=neutral, PublicKeyToken=a7d26565bac4d604, processorArchitecture=MSIL">
       <HintPath>Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\Google.Protobuf.3.34.1\lib\net45\Google.Protobuf.dll</HintPath>
@@ -84,7 +85,7 @@
       <HintPath>Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\Newtonsoft.Json.Bson.1.0.3\lib\net45\Newtonsoft.Json.Bson.dll</HintPath>
     </Reference>
     <Reference Include="Npgsql, Version=8.0.6.0, Culture=neutral, PublicKeyToken=5d8b90d52f46fda7, processorArchitecture=MSIL">
-      <HintPath>Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\Npgsql.8.0.6\lib\netstandard2.0\Npgsql.dll</HintPath>
+      <HintPath>Z:\Customers\Demo\4.1\web\ChatClon\packages\Npgsql.8.0.6\lib\netstandard2.0\Npgsql.dll</HintPath>
     </Reference>
     <Reference Include="Oracle.ManagedDataAccess, Version=4.122.23.1, Culture=neutral, PublicKeyToken=89b483f429c47342, processorArchitecture=MSIL">
       <HintPath>Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\Oracle.ManagedDataAccess.23.26.200\lib\net472\Oracle.ManagedDataAccess.dll</HintPath>
@@ -189,9 +190,12 @@
     <Error Condition="!Exists('packages\EntityFramework.6.5.1\build\EntityFramework.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\EntityFramework.6.5.1\build\EntityFramework.targets'))" />
     <Error Condition="!Exists('Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\System.ValueTuple.4.6.2\build\net471\System.ValueTuple.targets')" Text="$([System.String]::Format('$(ErrorText)', 'Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\System.ValueTuple.4.6.2\build\net471\System.ValueTuple.targets'))" />
     <Error Condition="!Exists('Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\Stub.System.Data.SQLite.Core.NetFramework.1.0.119.0\build\net46\Stub.System.Data.SQLite.Core.NetFramework.targets')" Text="$([System.String]::Format('$(ErrorText)', 'Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\Stub.System.Data.SQLite.Core.NetFramework.1.0.119.0\build\net46\Stub.System.Data.SQLite.Core.NetFramework.targets'))" />
+    <Error Condition="!Exists('Z:\Customers\Demo\4.1\web\ChatClon\packages\EntityFramework.6.5.2\build\EntityFramework.props')" Text="$([System.String]::Format('$(ErrorText)', 'Z:\Customers\Demo\4.1\web\ChatClon\packages\EntityFramework.6.5.2\build\EntityFramework.props'))" />
+    <Error Condition="!Exists('Z:\Customers\Demo\4.1\web\ChatClon\packages\EntityFramework.6.5.2\build\EntityFramework.targets')" Text="$([System.String]::Format('$(ErrorText)', 'Z:\Customers\Demo\4.1\web\ChatClon\packages\EntityFramework.6.5.2\build\EntityFramework.targets'))" />
   </Target>
   <Import Project="Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\EntityFramework.6.4.4\build\EntityFramework.targets" Condition="Exists('Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\EntityFramework.6.4.4\build\EntityFramework.targets')" />
   <Import Project="packages\EntityFramework.6.5.1\build\EntityFramework.targets" Condition="Exists('packages\EntityFramework.6.5.1\build\EntityFramework.targets')" />
   <Import Project="Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\System.ValueTuple.4.6.2\build\net471\System.ValueTuple.targets" Condition="Exists('Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\System.ValueTuple.4.6.2\build\net471\System.ValueTuple.targets')" />
   <Import Project="Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\Stub.System.Data.SQLite.Core.NetFramework.1.0.119.0\build\net46\Stub.System.Data.SQLite.Core.NetFramework.targets" Condition="Exists('Z:\Customers\Demo\4.1\web\aurorasfaweb40\packages\Stub.System.Data.SQLite.Core.NetFramework.1.0.119.0\build\net46\Stub.System.Data.SQLite.Core.NetFramework.targets')" />
+  <Import Project="Z:\Customers\Demo\4.1\web\ChatClon\packages\EntityFramework.6.5.2\build\EntityFramework.targets" Condition="Exists('Z:\Customers\Demo\4.1\web\ChatClon\packages\EntityFramework.6.5.2\build\EntityFramework.targets')" />
 </Project>
