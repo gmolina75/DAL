@@ -1,4 +1,4 @@
-﻿using MySql.Data.MySqlClient;
+using MySql.Data.MySqlClient;
 using Npgsql;
 using Newtonsoft.Json;
 using Oracle.ManagedDataAccess.Client;
@@ -7,22 +7,20 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data;
+using System.Data.Common;
 using System.Data.Odbc;
 using System.Data.OleDb;
 using System.Data.SqlClient;
-using System.IO;
-using System.Text;
-using System.Xml;
 using System.Data.SQLite;
-// para sqlite el unico nugget que dene instalar es System.Data.SQLite.Core. El otro System.Data.SQLite
-// es para usar el designer de visual studio y no es necesario para el funcionamiento del DAL
-//tambien deb ser agrgada en el proyecto si va a usar sqlite
-//proque sino no copia las libre x64 y x86 sqliteinterop.dll
-//a la carpeta de salida y da error al ejecutar el proyecto
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.ExceptionServices;
+using System.Text;
+using System.Threading.Tasks;
+using System.Xml;
 
 namespace DAL
 {
-    // Each provider supported will be a part of this enum
     public enum EnumProviders
     {
         ODBC,
@@ -32,9 +30,8 @@ namespace DAL
         MySqlClient,
         OracleClient,
         SAPHANNA,
-        Npgsql,     // postgre sql,
+        Npgsql,
         none = -1
-
     }
 
     public enum EnumProvidersDB
@@ -63,10 +60,7 @@ namespace DAL
         DB_NONE = -1
     }
 
-    // The sctrucure is to hold parameter info. An Array of this structure
-    // is sent to the DAL bcos we should not bind to a 
-    // specific type of parameter like SQLParamter
-    [Serializable()]
+    [Serializable]
     public struct ParamStruct
     {
         public string ParamName;
@@ -75,108 +69,133 @@ namespace DAL
         public ParameterDirection direction;
         public string sourceColumn;
         public int size;
+
+        public ParamStruct(string paramName, DbType dataType, object value = null,
+            ParameterDirection direction = ParameterDirection.Input,
+            string sourceColumn = "", int size = 0)
+        {
+            ParamName = paramName;
+            DataType = dataType;
+            this.value = value;
+            this.direction = direction;
+            this.sourceColumn = sourceColumn;
+            this.size = size;
+        }
     }
 
-
-    internal class ProviderFactory
+    internal static class ProviderFactory
     {
-
-        // Should not be instantiated. So that is always shared
-        private ProviderFactory()
+        private sealed class ProviderMeta
         {
+            public Func<IDbConnection> ConnectionFactory { get; set; }
+            public Func<IDbCommand> CommandFactory { get; set; }
+            public Func<IDbDataAdapter> AdapterFactory { get; set; }
+            public Func<IDbDataParameter> ParameterFactory { get; set; }
+            public Func<DbCommandBuilder> CommandBuilderFactory { get; set; }
+            public Action ClearPools { get; set; }
         }
+
+        private static readonly Dictionary<EnumProviders, ProviderMeta> _providers = new Dictionary<EnumProviders, ProviderMeta>
+        {
+            [EnumProviders.SQLClient] = new ProviderMeta
+            {
+                ConnectionFactory = () => new SqlConnection(),
+                CommandFactory = () => new SqlCommand(),
+                AdapterFactory = () => new SqlDataAdapter(),
+                ParameterFactory = () => new SqlParameter(),
+                CommandBuilderFactory = () => new SqlCommandBuilder(),
+                ClearPools = SqlConnection.ClearAllPools
+            },
+            [EnumProviders.ODBC] = new ProviderMeta
+            {
+                ConnectionFactory = () => new OdbcConnection(),
+                CommandFactory = () => new OdbcCommand(),
+                AdapterFactory = () => new OdbcDataAdapter(),
+                ParameterFactory = () => new OdbcParameter(),
+                CommandBuilderFactory = () => new OdbcCommandBuilder(),
+                ClearPools = () => { }
+            },
+            [EnumProviders.OLEDB] = new ProviderMeta
+            {
+                ConnectionFactory = () => new OleDbConnection(),
+                CommandFactory = () => new OleDbCommand(),
+                AdapterFactory = () => new OleDbDataAdapter(),
+                ParameterFactory = () => new OleDbParameter(),
+                CommandBuilderFactory = () => new OleDbCommandBuilder(),
+                ClearPools = () => { }
+            },
+            [EnumProviders.SQLLITE] = new ProviderMeta
+            {
+                ConnectionFactory = () => new SQLiteConnection(),
+                CommandFactory = () => new SQLiteCommand(),
+                AdapterFactory = () => new SQLiteDataAdapter(),
+                ParameterFactory = () => new SQLiteParameter(),
+                CommandBuilderFactory = () => new SQLiteCommandBuilder(),
+                ClearPools = () => { }
+            },
+            [EnumProviders.MySqlClient] = new ProviderMeta
+            {
+                ConnectionFactory = () => new MySqlConnection(),
+                CommandFactory = () => new MySqlCommand(),
+                AdapterFactory = () => new MySqlDataAdapter(),
+                ParameterFactory = () => new MySqlParameter(),
+                CommandBuilderFactory = () => new MySqlCommandBuilder(),
+                ClearPools = MySqlConnection.ClearAllPools
+            },
+            [EnumProviders.OracleClient] = new ProviderMeta
+            {
+                ConnectionFactory = () => new OracleConnection(),
+                CommandFactory = () => new OracleCommand(),
+                AdapterFactory = () => new OracleDataAdapter(),
+                ParameterFactory = () => new OracleParameter(),
+                CommandBuilderFactory = () => new OracleCommandBuilder(),
+                ClearPools = OracleConnection.ClearAllPools
+            },
+            [EnumProviders.Npgsql] = new ProviderMeta
+            {
+                ConnectionFactory = () => new NpgsqlConnection(),
+                CommandFactory = () => new NpgsqlCommand(),
+                AdapterFactory = () => new NpgsqlDataAdapter(),
+                ParameterFactory = () => new NpgsqlParameter(),
+                CommandBuilderFactory = () => new NpgsqlCommandBuilder(),
+                ClearPools = NpgsqlConnection.ClearAllPools
+            }
+        };
+
+        private static ProviderMeta GetMeta(EnumProviders provider)
+        {
+            if (_providers.TryGetValue(provider, out var meta))
+                return meta;
+            Trace.WriteLine($"Provider {provider} no esta implementado. Usando SQLClient por defecto.");
+            return _providers[EnumProviders.SQLClient];
+        }
+
         public static void ClearAllPools(EnumProviders provider)
         {
             try
             {
-
-
-                switch (provider)
-                {
-                    case EnumProviders.SQLClient:
-                        System.Data.SqlClient.SqlConnection.ClearAllPools();
-                        break;
-                    case EnumProviders.ODBC:
-                    case EnumProviders.OLEDB:
-                    case EnumProviders.SQLLITE:
-                        break;
-                    case EnumProviders.MySqlClient:
-                        MySql.Data.MySqlClient.MySqlConnection.ClearAllPools();
-                        break;
-                    case EnumProviders.OracleClient:
-                        {
-                            Oracle.ManagedDataAccess.Client.OracleConnection.ClearAllPools();
-                        }
-                        break;
-                    case EnumProviders.Npgsql:
-                        {
-
-                            Npgsql.NpgsqlConnection.ClearAllPools();
-                        }
-                        break;
-                    default:
-                        Console.WriteLine($"ClearAllPools no soportado para: {provider}");
-                        break;
-                }
+                GetMeta(provider).ClearPools?.Invoke();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error al limpiar el pool para {provider}: {ex.Message}");
+                Trace.WriteLine($"Error al limpiar el pool para {provider}: {ex.Message}");
             }
-
         }
 
-        public static IDbCommand GetCommand(EnumProviders provider)
-        {
-            switch (provider)
-            {
-                case EnumProviders.SQLClient:
-                    {
-                        return new SqlCommand();
-                    }
-                case EnumProviders.ODBC:
-                    {
-                        return new OdbcCommand();
-                    }
-                case EnumProviders.OLEDB:
-                    {
-                        return new OleDbCommand();
-                    }
-                case EnumProviders.SQLLITE:
-                    {
-                        return new SQLiteCommand();
-                    }
-                case EnumProviders.MySqlClient:
-                    {
-                        return new MySqlCommand();
-                    }
-                case EnumProviders.OracleClient:
-                    {
-                        return new OracleCommand();
-                    }
-                case EnumProviders.Npgsql:
-                    {
-                        return new NpgsqlCommand();
-                    }
-            }
-            return new SqlCommand();
-        }
+        public static IDbConnection GetConnection(EnumProviders provider) => GetMeta(provider).ConnectionFactory();
+        public static IDbCommand GetCommand(EnumProviders provider) => GetMeta(provider).CommandFactory();
+        public static IDbDataAdapter GetAdapter(EnumProviders provider) => GetMeta(provider).AdapterFactory();
+        public static IDbDataParameter GetParameter(EnumProviders provider) => GetMeta(provider).ParameterFactory();
+        public static DbCommandBuilder GetCommandBuilder(EnumProviders provider) => GetMeta(provider).CommandBuilderFactory();
 
-
-        public static IDbCommand GetCommand(string strCmdText, CommandType cmdType, int cmdTimeout, ParamStruct[] ParameterArray, EnumProviders provider)
+        public static IDbCommand GetCommand(string strCmdText, CommandType cmdType, int cmdTimeout, ParamStruct[] parameterArray, EnumProviders provider)
         {
-            IDbCommand cmd;
-            if (provider == EnumProviders.SQLClient)
-                cmd = new SqlCommand();
-            else
-                cmd = GetCommand(provider);
-            Int16 i;
-            if (ParameterArray != null)
+            var cmd = GetCommand(provider);
+            if (parameterArray != null)
             {
-                for (i = 0; i <= ParameterArray.Length - 1; i++)
+                foreach (var ps in parameterArray)
                 {
-                    ParamStruct ps = ParameterArray[i];
-                    IDbDataParameter pm = GetParameter(ps.ParamName, ps.direction, ps.value, ps.DataType, ps.sourceColumn, ps.size, provider);
+                    var pm = GetParameter(ps.ParamName, ps.direction, ps.value, ps.DataType, ps.sourceColumn, ps.size, provider);
                     cmd.Parameters.Add(pm);
                 }
             }
@@ -186,162 +205,13 @@ namespace DAL
             return cmd;
         }
 
-
-        public static IDbConnection GetConnection(EnumProviders provider)
-        {
-            //try
-            //{
-                switch (provider)
-                {
-                    case EnumProviders.SQLClient:
-                        {
-                            return new SqlConnection();
-                        }
-                    case EnumProviders.ODBC:
-                        {
-                            return new OdbcConnection();
-                        }
-                    case EnumProviders.OLEDB:
-                        {
-                            return new OleDbConnection();
-                        }
-
-                    case EnumProviders.SQLLITE:
-                        {
-                            return new SQLiteConnection();
-                        }
-                    case EnumProviders.MySqlClient:
-                        {
-                            return new MySqlConnection();
-                        }
-                    case EnumProviders.OracleClient:
-                        {
-                            return new OracleConnection();
-                        }
-                    case EnumProviders.Npgsql:
-                        {
-                            return new NpgsqlConnection();
-                        }
-                    default:
-                        return new SqlConnection();
-                }
-            //}
-            //catch (Exception ex)
-            //{
-            //    Console.WriteLine(ex.Message);
-            //    return new SqlConnection();
-
-            //}
-
-        }
-
         public static IDbConnection GetConnection(string strConnString, EnumProviders provider)
         {
             if (string.IsNullOrEmpty(strConnString))
                 strConnString = GetConnectionStringFromConfig;
-            IDbConnection con = null;
-            try
-            {
-                if (provider == EnumProviders.SQLClient)
-                    con = new SqlConnection();
-                else
-                    con = GetConnection(provider);
-            }
-            catch (Exception ex)
-            {
-
-                if (provider == EnumProviders.SQLClient)
-                {
-                    con = new SqlConnection();
-                }
-                else
-                    throw ex;
-            }
-            //gm parametro dudoso no se de donde salio 2022-09-04
-            //if (provider == EnumProviders.SQLClient)
-            //{
-            //    strConnString = strConnString + ";App=" + provider.ToString() + " Provider";
-            //}
-            if (con != null)
-                con.ConnectionString = strConnString;
-            return con;
-        }
-
-        public static IDbDataAdapter GetAdapter(EnumProviders provider)
-        {
-            switch (provider)
-            {
-                case EnumProviders.ODBC:
-                    {
-                        return new OdbcDataAdapter();
-                    }
-
-                case EnumProviders.SQLClient:
-                    {
-                        return new SqlDataAdapter();
-                    }
-
-                case EnumProviders.OLEDB:
-                    {
-                        return new OleDbDataAdapter();
-                    }
-
-                case EnumProviders.SQLLITE:
-                    {
-                        return new SQLiteDataAdapter();
-                    }
-                case EnumProviders.MySqlClient:
-                    {
-                        return new MySqlDataAdapter();
-                    }
-                case EnumProviders.OracleClient:
-                    {
-                        return new OracleDataAdapter();
-                    }
-                case EnumProviders.Npgsql:
-                    {
-                        return new NpgsqlDataAdapter();
-                    }
-            }
-            return new SqlDataAdapter();
-        }
-
-        public static IDbDataParameter GetParameter(EnumProviders provider)
-        {
-            switch (provider)
-            {
-                case EnumProviders.ODBC:
-                    {
-                        return new OdbcParameter();
-                    }
-
-                case EnumProviders.SQLClient:
-                    {
-                        return new SqlParameter();
-                    }
-
-                case EnumProviders.OLEDB:
-                    {
-                        return new OleDbParameter();
-                    }
-                case EnumProviders.SQLLITE:
-                    {
-                        return new SQLiteParameter();
-                    }
-                case EnumProviders.MySqlClient:
-                    {
-                        return new MySqlParameter();
-                    }
-                case EnumProviders.OracleClient:
-                    {
-                        return new OracleParameter();
-                    }
-                case EnumProviders.Npgsql:
-                    {
-                        return new NpgsqlParameter();
-                    }
-            }
-            return new SqlParameter();
+            var conn = GetConnection(provider);
+            conn.ConnectionString = strConnString;
+            return conn;
         }
 
         public static IDbDataParameter GetParameter(string paramName, ParameterDirection paramDirection, object paramValue, DbType paramtype, string sourceColumn, int size, EnumProviders provider)
@@ -354,198 +224,116 @@ namespace DAL
             if (paramValue != null)
                 param.Value = paramValue;
             param.Direction = paramDirection;
-            if (sourceColumn != "")
+            if (!string.IsNullOrEmpty(sourceColumn))
                 param.SourceColumn = sourceColumn;
             return param;
         }
 
+        public static IDbTransaction GetTransaction(IDbConnection conn, IsolationLevel transisolationLevel) => conn.BeginTransaction(transisolationLevel);
 
+        private static string _cachedConnectionString;
+        private static EnumProviders _cachedProvider = EnumProviders.none;
+        private static EnumProvidersDB _cachedProviderDB = EnumProvidersDB.DB_NONE;
+        private static readonly object _configSync = new object();
 
-        public static IDbTransaction GetTransaction(IDbConnection conn, IsolationLevel transisolationLevel)
+        public static void RefreshConfigCache()
         {
-            return conn.BeginTransaction(transisolationLevel);
-        }
-
-
-
-        public static object GetCommandBuilder(EnumProviders provider)
-        {
-            switch (provider)
+            lock (_configSync)
             {
-                case EnumProviders.ODBC:
-                    {
-                        return new OdbcCommandBuilder();
-                    }
-
-                case EnumProviders.SQLClient:
-                    {
-                        return new SqlCommandBuilder();
-                    }
-
-                case EnumProviders.OLEDB:
-                    {
-                        return new OleDbCommandBuilder();
-                    }
-                case EnumProviders.SQLLITE:
-                    {
-                        return new SQLiteCommandBuilder();
-                    }
-                case EnumProviders.MySqlClient:
-                    {
-                        return new MySqlCommandBuilder();
-                    }
-                case EnumProviders.OracleClient:
-                    {
-                        return new OracleCommandBuilder();
-                    }
-                case EnumProviders.Npgsql:
-                    {
-                        return new NpgsqlCommandBuilder();
-                    }
-                default:
-                    {
-                        return new SqlCommandBuilder();
-                    }
+                _cachedConnectionString = null;
+                _cachedProvider = EnumProviders.none;
+                _cachedProviderDB = EnumProvidersDB.DB_NONE;
             }
         }
 
+        private static string ReadAppSetting(string key)
+        {
+            try { return ConfigurationManager.AppSettings.Get(key); }
+            catch { return null; }
+        }
 
+        private static T ReadXmlValue<T>(string elementName, T defaultValue) where T : IConvertible
+        {
+            const string fileName = "ConnectionString.xml";
+            if (!File.Exists(fileName)) return defaultValue;
+            try
+            {
+                using (var reader = XmlReader.Create(fileName))
+                {
+                    while (reader.Read())
+                    {
+                        if (reader.NodeType == XmlNodeType.Element && reader.Name == elementName)
+                        {
+                            string value = reader.ReadString();
+                            return (T)Convert.ChangeType(value, typeof(T));
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"Error leyendo {elementName} de {fileName}: {ex.Message}");
+            }
+            return defaultValue;
+        }
 
-        // Get the configuration settings
         public static string GetConnectionString
         {
             get
             {
-                if (ConfigurationManager.AppSettings.Get("ConnectionString") != null)
-                    return ConfigurationManager.AppSettings.Get("ConnectionString");
-                else
-                    return GetConnectionStringFromXML;
-            }
-        }
-        public static string GetConnectionStringFromConfig
-        {
-            get
-            {
-                if (ConfigurationManager.AppSettings.Get("ConnectionString") != null)
-                    return ConfigurationManager.AppSettings.Get("ConnectionString");
-                else
-                    return GetConnectionStringFromXML;
-            }
-        }
-        public static string GetConnectionStringFromXML
-        {
-            get
-            {
-                string ConnectionString = "";
-                if (File.Exists("ConnectionString.xml"))
+                if (_cachedConnectionString != null) return _cachedConnectionString;
+                lock (_configSync)
                 {
-                    using (XmlTextReader reader = new XmlTextReader("ConnectionString.xml"))
-                    {
-                        while ((reader.Read()))
-                        {
-                            if ((reader.NodeType == XmlNodeType.Element & reader.Name == "CS"))
-                                ConnectionString = reader.ReadString();
-                        }
-                    }
+                    if (_cachedConnectionString != null) return _cachedConnectionString;
+                    var val = ReadAppSetting("ConnectionString");
+                    _cachedConnectionString = val ?? ReadXmlValue("CS", "");
+                    return _cachedConnectionString;
                 }
-                return ConnectionString;
             }
         }
+
+        public static string GetConnectionStringFromConfig => GetConnectionString;
+
         public static EnumProviders GetProvider
         {
             get
             {
-                try
+                if (_cachedProvider != EnumProviders.none) return _cachedProvider;
+                lock (_configSync)
                 {
-                    if (ConfigurationManager.AppSettings.Get("Provider") != null)
-                        return (EnumProviders)Convert.ToInt16(ConfigurationManager.AppSettings.Get("Provider"));
+                    if (_cachedProvider != EnumProviders.none) return _cachedProvider;
+                    var val = ReadAppSetting("Provider");
+                    if (val != null && short.TryParse(val, out short p))
+                        _cachedProvider = (EnumProviders)p;
                     else
-                        return GetProviderFromXML;
+                        _cachedProvider = ReadXmlValue("Provider", EnumProviders.SQLClient);
+                    return _cachedProvider;
                 }
-                catch (Exception)
-                {
-
-                    return EnumProviders.SQLClient;
-                }
-
             }
         }
+
         public static EnumProvidersDB GetProviderDB
         {
             get
             {
-                try
+                if (_cachedProviderDB != EnumProvidersDB.DB_NONE) return _cachedProviderDB;
+                lock (_configSync)
                 {
-                    if (ConfigurationManager.AppSettings.Get("ProviderDB") != null)
-                        return (EnumProvidersDB)Convert.ToInt16(ConfigurationManager.AppSettings.Get("ProviderDB"));
+                    if (_cachedProviderDB != EnumProvidersDB.DB_NONE) return _cachedProviderDB;
+                    var val = ReadAppSetting("ProviderDB");
+                    if (val != null && short.TryParse(val, out short p))
+                        _cachedProviderDB = (EnumProvidersDB)p;
                     else
-                        return GetProviderDBFromXML;
+                        _cachedProviderDB = ReadXmlValue("ProviderDB", EnumProvidersDB.DB_SQL);
+                    return _cachedProviderDB;
                 }
-                catch (Exception)
-                {
-
-                    return EnumProvidersDB.DB_SQL;
-                }
-
-            }
-        }
-        public static EnumProviders GetProviderFromXML
-        {
-            get
-            {
-                try
-                {
-                    EnumProviders Provider = EnumProviders.OLEDB;
-                    if (File.Exists("ConnectionString.xml"))
-                    {
-                        using (XmlTextReader reader = new XmlTextReader("ConnectionString.xml"))
-                        {
-                            while ((reader.Read()))
-                            {
-                                if ((reader.NodeType == XmlNodeType.Element & reader.Name == "Provider"))
-                                    Provider = (EnumProviders)Convert.ToInt16(reader.ReadString());
-                            }
-                        }
-                    }
-                    return Provider;
-                }
-                catch (Exception)
-                {
-                }
-                return EnumProviders.OLEDB;
-            }
-        }
-        public static EnumProvidersDB GetProviderDBFromXML
-        {
-            get
-            {
-                try
-                {
-                    EnumProvidersDB Provider = EnumProvidersDB.DB_UNKNOWN_PROV;
-                    if (File.Exists("ConnectionString.xml"))
-                    {
-                        using (XmlTextReader reader = new XmlTextReader("ConnectionString.xml"))
-                        {
-                            while ((reader.Read()))
-                            {
-                                if ((reader.NodeType == XmlNodeType.Element & reader.Name == "ProviderDB"))
-                                    Provider = (EnumProvidersDB)Convert.ToInt16(reader.ReadString());
-                            }
-                        }
-                    }
-                    return Provider;
-                }
-                catch (Exception)
-                {
-                }
-                return EnumProvidersDB.DB_UNKNOWN_PROV;
             }
         }
     }
 
-
-    public class DataAccess
+    public class DataAccess : IDisposable
     {
+        private bool _disposed;
         private IDbTransaction _trans;
         private IsolationLevel _isolationLevel;
         private IDbConnection _conn;
@@ -556,210 +344,169 @@ namespace DAL
         private const int COMMAND_TIMEOUT = 100;
         private CommandBehavior _commandBehavior;
 
-
-        // Getting the config settings and set the default isolation level and
-        // DataReader command behavior
         public DataAccess()
         {
             _isolationLevel = IsolationLevel.ReadCommitted;
             _commandBehavior = CommandBehavior.CloseConnection;
             _provider = ProviderFactory.GetProvider;
         }
-        public string getConnectionString()
-        {
-            return _connString;
-        }
-        public void setConnectionString(string connString)
-        {
 
-            _connString = connString;
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
         }
-        // Getting the config settings and set the default isolation level and
-        // DataReader command behavior
-        public void WriteXMLConnection(string ConnectionString,
-            EnumProviders provider,
-            EnumProvidersDB providerdb)
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (_disposed) return;
+            if (disposing)
+            {
+                if (_trans != null)
+                {
+                    try { _trans.Rollback(); } catch { /* ignore */ }
+                    _trans.Dispose();
+                    _trans = null;
+                }
+                if (_conn != null)
+                {
+                    if (_conn.State != ConnectionState.Closed)
+                        try { _conn.Close(); } catch { /* ignore */ }
+                    _conn.Dispose();
+                    _conn = null;
+                }
+            }
+            _disposed = true;
+        }
+
+        public string getConnectionString() => _connString;
+        public void setConnectionString(string connString) => _connString = connString;
+
+        public void WriteXMLConnection(string ConnectionString, EnumProviders provider, EnumProvidersDB providerdb)
         {
             try
             {
                 if (File.Exists("ConnectionString.xml"))
                     File.Delete("ConnectionString.xml");
-                //My.Computer.FileSystem.DeleteFile("ConnectionString.xml", Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs, Microsoft.VisualBasic.FileIO.RecycleOption.DeletePermanently, Microsoft.VisualBasic.FileIO.UICancelOption.ThrowException);
             }
             catch (Exception e)
             {
-                Console.WriteLine("Exception: {0}", e.ToString());
+                Trace.WriteLine($"Exception: {e}");
             }
+
             try
             {
-                XmlWriterSettings settings = new XmlWriterSettings
+                var settings = new XmlWriterSettings { Indent = true, IndentChars = "    " };
+                using (var writer = XmlWriter.Create("ConnectionString.xml", settings))
                 {
-                    Indent = true,
-                    IndentChars = "    "
-                };
-
-                using (XmlWriter writer = XmlWriter.Create("ConnectionString.xml", settings))
-                {
-                    // Write XML data.
                     writer.WriteStartDocument();
-
                     writer.WriteStartElement("ConnectionString");
                     writer.WriteElementString("CS", ConnectionString);
-                    writer.WriteValue(ConnectionString);
                     writer.WriteElementString("Provider", Convert.ToInt32(provider).ToString());
-                    writer.WriteElementString("ProviderDB", Convert.ToInt32(ProviderDB).ToString());
-
+                    writer.WriteElementString("ProviderDB", Convert.ToInt32(providerdb).ToString());
                     writer.WriteEndElement();
                     writer.WriteEndDocument();
-
                     writer.Flush();
                 }
+                ProviderFactory.RefreshConfigCache();
             }
-
             catch (Exception e)
             {
-                Console.WriteLine("Exception: {0}", e.ToString());
+                Trace.WriteLine($"Exception: {e}");
             }
         }
 
-        // This method is used by ExecDataSet, ExecScalar, ExecReader and ExecNonQuery.
-        // This is a common piece of 
-        // code called in these methods
+        private void EnsureNotDisposed()
+        {
+            if (_disposed) throw new ObjectDisposedException(nameof(DataAccess));
+        }
+
         private void PrepareAll(IDbCommand cmd, ref IDbConnection conn, string strSQL, CommandType cmdType, ParamStruct[] parameterArray)
         {
-            // If transaction has already been started
             if (!IsInTransaction())
             {
-                string strconn = GetConnectionString;
-                //if(string.IsNullOrEmpty(strconn)
-                //  strconn= ProviderFactory.GetConnectionStringFromConfig();
                 if (conn == null)
-                    conn = ProviderFactory.GetConnection(strconn, Provider);
-                if (cmd == null)
-                    cmd = ProviderFactory.GetCommand(strSQL, cmdType, CmdTimeout, parameterArray, Provider);
+                    conn = ProviderFactory.GetConnection(GetConnectionString, Provider);
                 cmd.Connection = conn;
-                conn.Open();
+                if (conn.State != ConnectionState.Open)
+                    conn.Open();
             }
             else
             {
-                cmd = ProviderFactory.GetCommand(strSQL, cmdType, CmdTimeout, parameterArray, Provider);
                 cmd.Transaction = _trans;
                 cmd.Connection = _conn;
             }
         }
-        public void ClearAllPools()
-        {
-            ProviderFactory.ClearAllPools(Provider);
-        }
+
+        public void ClearAllPools() => ProviderFactory.ClearAllPools(Provider);
+
         public IDbConnection GetConnection()
         {
-            // If transaction has already been started            
-            string strconn = GetConnectionString;
-            return ProviderFactory.GetConnection(strconn, Provider);
+            EnsureNotDisposed();
+            return ProviderFactory.GetConnection(GetConnectionString, Provider);
         }
-
 
         public EnumProviders Provider
         {
-            get
-            {
-                return _provider;
-            }
-            set
-            {
-                _provider = value;
-            }
+            get => _provider;
+            set => _provider = value;
         }
+
         public EnumProvidersDB ProviderDB
         {
-            get
-            {
-                return _providerDB;
-            }
-            set
-            {
-                _providerDB = value;
-            }
+            get => _providerDB;
+            set => _providerDB = value;
         }
 
         public string GetConnectionString
         {
-            get
-            {
-                return _connString;
-            }
-            set
-            {
-                _connString = value;
-            }
+            get => _connString ?? ProviderFactory.GetConnectionString;
+            set => _connString = value;
         }
 
         public IsolationLevel TransIsolationLevel
         {
-            get
-            {
-                return _isolationLevel;
-            }
-            set
-            {
-                _isolationLevel = value;
-            }
+            get => _isolationLevel;
+            set => _isolationLevel = value;
         }
 
         public int CmdTimeout
         {
-            get
-            {
-                if (_cmdTimeout == 0)
-                    return COMMAND_TIMEOUT;
-                return _cmdTimeout;
-            }
-            set
-            {
-                _cmdTimeout = value;
-            }
+            get => _cmdTimeout == 0 ? COMMAND_TIMEOUT : _cmdTimeout;
+            set => _cmdTimeout = value;
         }
 
-        // To be used exclusively by the Datareader
         public CommandBehavior ReaderCommandBehavior
         {
-            get
-            {
-                return _commandBehavior;
-            }
-            set
-            {
-                _commandBehavior = value;
-            }
+            get => _commandBehavior;
+            set => _commandBehavior = value;
         }
 
         public static bool TestConnection(ref string msg)
         {
-
-            DataAccess ds = new DataAccess();
-            using (IDbConnection conn = ds.GetConnection())
-                try
+            using (var ds = new DataAccess())
+            {
+                using (IDbConnection conn = ds.GetConnection())
                 {
-                    conn.Open();
-                    conn.Close();
-                    conn.Dispose();
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    if (msg != null)
+                    try
+                    {
+                        conn.Open();
+                        return true;
+                    }
+                    catch (Exception ex)
                     {
                         msg = ex.Message;
+                        return false;
                     }
                 }
-
-
-            return false;
+            }
         }
-
 
         public void BeginTrans(string connString, IsolationLevel transisolationLevel)
         {
+            EnsureNotDisposed();
+            if (IsInTransaction())
+                throw new InvalidOperationException("Ya existe una transaccion activa.");
             _conn = ProviderFactory.GetConnection(connString, Provider);
             _conn.Open();
             _trans = ProviderFactory.GetTransaction(_conn, transisolationLevel);
@@ -767,67 +514,81 @@ namespace DAL
 
         public void BeginTrans(IsolationLevel transisolationLevel)
         {
+            EnsureNotDisposed();
+            if (IsInTransaction())
+                throw new InvalidOperationException("Ya existe una transaccion activa.");
             _conn = ProviderFactory.GetConnection(_connString, Provider);
             _conn.Open();
             _trans = ProviderFactory.GetTransaction(_conn, transisolationLevel);
         }
 
-        public void CommitTrans()
-        {
-            CommitTrans(true);
-        }
+        public void CommitTrans() => CommitTrans(true);
 
-        // This is for DataReader usage only. The caller has to pass false here so that
-        // the connection is not closed before the DR is closed
-        public void CommitTrans(bool CloseConnection)
+        public void CommitTrans(bool closeConnection)
         {
-            _trans.Commit();
-            DisposeTrans(CloseConnection);
+            EnsureNotDisposed();
+            if (_trans == null) return;
+            try
+            {
+                _trans.Commit();
+            }
+            finally
+            {
+                DisposeTrans(closeConnection);
+            }
         }
 
         public void AbortTrans()
         {
-            if (IsInTransaction())
+            EnsureNotDisposed();
+            if (!IsInTransaction()) return;
+            try
             {
                 _trans.Rollback();
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"Error en Rollback: {ex.Message}");
+            }
+            finally
+            {
                 DisposeTrans(true);
             }
         }
 
-        private void DisposeTrans(bool CloseConnection)
+        private void DisposeTrans(bool closeConnection)
         {
-            if (CloseConnection)
+            if (_trans != null)
             {
-                if (_conn != null)
-                {
-                    _conn.Close();
-                    _conn.Dispose();
-                }
+                _trans.Dispose();
+                _trans = null;
             }
-            _trans.Dispose();
+            if (closeConnection && _conn != null)
+            {
+                if (_conn.State != ConnectionState.Closed)
+                {
+                    try { _conn.Close(); } catch { /* ignore */ }
+                }
+                _conn.Dispose();
+                _conn = null;
+            }
         }
 
-        public bool IsInTransaction()
-        {
-            return (_trans != null);
-        }
-
-
-        // To return a DataSet after running a SQL Statement
+        public bool IsInTransaction() => _trans != null;
 
         public void ExecDataSet(DataSet ds, string strSQL, CommandType cmdtype = CommandType.Text)
         {
-            ExecDataSet(ds, strSQL, cmdtype, null/* TODO Change to default(_) if this is not a reference type */);
+            ExecDataSet(ds, strSQL, cmdtype, null);
         }
 
         public DataSet ExecDataSet(string strSQL, CommandType cmdtype = CommandType.Text)
         {
-            return ExecDataSet(strSQL, cmdtype, null/* TODO Change to default(_) if this is not a reference type */);
+            return ExecDataSet(strSQL, cmdtype, null);
         }
 
         public DataSet ExecDataSet(string strSQL, CommandType cmdtype, ParamStruct[] parameterArray)
         {
-            using (DataSet ds = new DataSet("DataSet"))
+            using (var ds = new DataSet("DataSet"))
             {
                 ExecDataSet(ds, strSQL, cmdtype, parameterArray);
                 return ds;
@@ -836,209 +597,170 @@ namespace DAL
 
         public void ExecDataSet(DataSet ds, string strSQL, CommandType cmdtype, ParamStruct[] parameterArray)
         {
-
-
+            EnsureNotDisposed();
             try
             {
-                string strconn = GetConnectionString;
-                //if(string.IsNullOrEmpty(strconn)
-                //  strconn= ProviderFactory.GetConnectionStringFromConfig();
-                using (IDbConnection conn = ProviderFactory.GetConnection(strconn, Provider))
+                using (IDbConnection conn = ProviderFactory.GetConnection(GetConnectionString, Provider))
+                using (IDbCommand cmd = ProviderFactory.GetCommand(strSQL, cmdtype, CmdTimeout, parameterArray, Provider))
                 {
-
-                    ///PrepareAll(ref cmd, ref conn, strSQL, cmdtype, parameterArray);
-                    using (IDbCommand cmd = ProviderFactory.GetCommand(strSQL, cmdtype, CmdTimeout, parameterArray, Provider))
-                    {
-                        cmd.Connection = conn;
-                        conn.Open();
-                        IDbDataAdapter da = ProviderFactory.GetAdapter(Provider);
-                        da.SelectCommand = cmd;
-                        da.Fill(ds);
-                    }
-
+                    cmd.Connection = conn;
+                    conn.Open();
+                    IDbDataAdapter da = ProviderFactory.GetAdapter(Provider);
+                    da.SelectCommand = cmd;
+                    da.Fill(ds);
                 }
             }
             catch (Exception ex)
             {
                 GenericExceptionHandler(ex);
             }
-
         }
 
-
-
-        // To run SQL Statements to return DataReader.
         public IDataReader ExecDataReader(string strSQL, CommandType cmdtype, ParamStruct[] parameterArray, IDbConnection conn = null)
         {
-            /* TODO Change to default(_) if this is not a reference type */
-            ;
+            EnsureNotDisposed();
             try
             {
-                using (IDbCommand cmd = ProviderFactory.GetCommand(strSQL, cmdtype, CmdTimeout, parameterArray, Provider))
-                {
-
-                    PrepareAll(cmd, ref conn, strSQL, cmdtype, parameterArray);
-                    //if ((CmdTimeout >= 0))
-                    //    cmd.CommandTimeout = CmdTimeout;
-
-                    return cmd.ExecuteReader(ReaderCommandBehavior);
-                }
+                IDbCommand cmd = ProviderFactory.GetCommand(strSQL, cmdtype, CmdTimeout, parameterArray, Provider);
+                PrepareAll(cmd, ref conn, strSQL, cmdtype, parameterArray);
+                return cmd.ExecuteReader(ReaderCommandBehavior);
             }
             catch (Exception ex)
             {
-                if (!IsInTransaction() & conn != null)
+                if (!IsInTransaction() && conn != null)
                 {
-                    if (conn.State != ConnectionState.Closed)
-                        conn.Close();
+                    try
+                    {
+                        if (conn.State != ConnectionState.Closed)
+                            conn.Close();
+                    }
+                    catch { /* ignore */ }
                     conn.Dispose();
                 }
                 GenericExceptionHandler(ex);
+                return null;
             }
-
-            return null/* TODO Change to default(_) if this is not a reference type */;
         }
 
         public IDataReader ExecDataReader(string strSQL, CommandType cmdtype = CommandType.Text)
         {
             return ExecDataReader(strSQL, cmdtype, null);
         }
-        public IEnumerable<Dictionary<string, object>> Serialize(IDataReader reader)
+
+        public IEnumerable<Dictionary<string, object>> SerializeEnumerable(IDataReader reader)
         {
-            /*var results = new List<Dictionary<string, object>>();
-            var cols = new List<string>();
-            for (var i = 0; i < reader.FieldCount; i++)
-                cols.Add(reader.GetName(i));
-
             while (reader.Read())
-                results.Add(SerializeRow(cols, reader));
-            reader.Close();
-            reader.Dispose();
-            return results;*/
-            var results = new List<Dictionary<string, object>>();
-
-            using (reader) // Asegura el cierre del reader automáticamente
             {
-                while (reader.Read())
+                var row = new Dictionary<string, object>(reader.FieldCount);
+                for (int i = 0; i < reader.FieldCount; i++)
                 {
-                    var row = new Dictionary<string, object>();
-
-                    for (int i = 0; i < reader.FieldCount; i++)
-                    {
-                        row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
-                    }
-
-                    results.Add(row);
+                    row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
                 }
+                yield return row;
             }
-            return results;
         }
+
+        public List<Dictionary<string, object>> Serialize(IDataReader reader)
+        {
+            using (reader)
+            {
+                return new List<Dictionary<string, object>>(SerializeEnumerable(reader));
+            }
+        }
+
         public string ExecDataReaderJson(string strSQL, CommandType cmdtype = CommandType.Text)
         {
-            return JsonConvert.SerializeObject(Serialize(ExecDataReader(strSQL, cmdtype, null/* TODO Change to default(_) if this is not a reference type */)), Newtonsoft.Json.Formatting.Indented);
-        }
-        public static string ExecDataReaderJsonS(string strSQL, CommandType cmdType = CommandType.Text)
-        {
-            return new DataAccess().ExecDataReaderJson(strSQL, cmdType);
-        }
-        private Dictionary<string, object> SerializeRow(IEnumerable<string> cols,
-                                                        IDataReader reader)
-        {
-            var result = new Dictionary<string, object>();
-            foreach (var col in cols)
-                result.Add(col, reader[col]);
-            return result;
+            using (IDataReader reader = ExecDataReader(strSQL, cmdtype, null))
+            {
+                if (reader == null) return "[]";
+                return JsonConvert.SerializeObject(SerializeEnumerable(reader), Newtonsoft.Json.Formatting.Indented);
+            }
         }
 
-        // TO run simple SQL statements W/O returning anything(records) back
-        public static int ExecNonQueryS(string strSQL, CommandType cmdType = System.Data.CommandType.Text)
+        public static string ExecDataReaderJsonS(string strSQL, CommandType cmdType = CommandType.Text)
         {
-            return new DataAccess().ExecNonQuery(strSQL, cmdType, null);
+            using (var dal = new DataAccess())
+            {
+                return dal.ExecDataReaderJson(strSQL, cmdType);
+            }
+        }
+
+        public static int ExecNonQueryS(string strSQL, CommandType cmdType = CommandType.Text)
+        {
+            using (var dal = new DataAccess())
+            {
+                return dal.ExecNonQuery(strSQL, cmdType, null);
+            }
         }
 
         public int ExecNonQuery(string strSQL, CommandType cmdType = CommandType.Text)
         {
-            return ExecNonQuery(strSQL, cmdType, null/* TODO Change to default(_) if this is not a reference type */);
+            return ExecNonQuery(strSQL, cmdType, null);
         }
+
         public int ExecNonQuery(string strSQL, CommandType cmdtype, ParamStruct[] parameterArray)
         {
-            int result = -1;
-
+            EnsureNotDisposed();
             try
             {
-                string strconn = GetConnectionString;
-                using (IDbConnection conn = ProviderFactory.GetConnection(strconn, Provider))
+                using (IDbConnection conn = ProviderFactory.GetConnection(GetConnectionString, Provider))
+                using (IDbCommand cmd = ProviderFactory.GetCommand(strSQL, cmdtype, CmdTimeout, parameterArray, Provider))
                 {
-                    using (IDbCommand cmd = ProviderFactory.GetCommand(strSQL, cmdtype, CmdTimeout, parameterArray, Provider))
-                    {
-                        cmd.Connection = conn;
-                        conn.Open();
-                        result = cmd.ExecuteNonQuery();
-                    }
+                    cmd.Connection = conn;
+                    conn.Open();
+                    return cmd.ExecuteNonQuery();
                 }
             }
             catch (Exception ex)
             {
                 GenericExceptionHandler(ex);
+                return -1;
             }
-            finally
-            {
-
-
-            }
-            return result;
         }
 
-
-
-
-        // This method saves data in a dataset with a single table and mandates the table name to be "Table".
-        // Operations on a single table are batched.
-        public void SaveDataSet(DataSet ds, string insertSQL, string deleteSQL, string updateSQL, ParamStruct[] InsertparameterArray, ParamStruct[] DeleteparameterArray, ParamStruct[] UpdateparameterArray
-        )
+        public void SaveDataSet(DataSet ds, string insertSQL, string deleteSQL, string updateSQL,
+            ParamStruct[] InsertparameterArray, ParamStruct[] DeleteparameterArray, ParamStruct[] UpdateparameterArray)
         {
+            EnsureNotDisposed();
             IDbDataAdapter da = ProviderFactory.GetAdapter(Provider);
             try
             {
-                string strconn = GetConnectionString;
-                using (IDbConnection cn = ProviderFactory.GetConnection(strconn, Provider))
+                using (IDbConnection cn = ProviderFactory.GetConnection(GetConnectionString, Provider))
                 {
-
                     if (!IsInTransaction())
                     {
-
-                        if (insertSQL != "")
+                        if (!string.IsNullOrEmpty(insertSQL))
                         {
                             da.InsertCommand = ProviderFactory.GetCommand(insertSQL, CommandType.StoredProcedure, CmdTimeout, InsertparameterArray, Provider);
                             da.InsertCommand.Connection = cn;
                         }
-                        if (updateSQL != "")
+                        if (!string.IsNullOrEmpty(updateSQL))
                         {
                             da.UpdateCommand = ProviderFactory.GetCommand(updateSQL, CommandType.StoredProcedure, CmdTimeout, UpdateparameterArray, Provider);
                             da.UpdateCommand.Connection = cn;
                         }
-                        if (deleteSQL != "")
+                        if (!string.IsNullOrEmpty(deleteSQL))
                         {
                             da.DeleteCommand = ProviderFactory.GetCommand(deleteSQL, CommandType.StoredProcedure, CmdTimeout, DeleteparameterArray, Provider);
                             da.DeleteCommand.Connection = cn;
                         }
                         cn.Open();
-
                     }
                     else
                     {
-                        if (insertSQL != "")
+                        if (!string.IsNullOrEmpty(insertSQL))
                         {
                             da.InsertCommand = ProviderFactory.GetCommand(insertSQL, CommandType.StoredProcedure, CmdTimeout, InsertparameterArray, Provider);
                             da.InsertCommand.Connection = _conn;
                             da.InsertCommand.Transaction = _trans;
                         }
-                        if (updateSQL != "")
+                        if (!string.IsNullOrEmpty(updateSQL))
                         {
                             da.UpdateCommand = ProviderFactory.GetCommand(updateSQL, CommandType.StoredProcedure, CmdTimeout, UpdateparameterArray, Provider);
                             da.UpdateCommand.Connection = _conn;
                             da.UpdateCommand.Transaction = _trans;
                         }
-                        if (deleteSQL != "")
+                        if (!string.IsNullOrEmpty(deleteSQL))
                         {
                             da.DeleteCommand = ProviderFactory.GetCommand(deleteSQL, CommandType.StoredProcedure, CmdTimeout, DeleteparameterArray, Provider);
                             da.DeleteCommand.Connection = _conn;
@@ -1048,137 +770,116 @@ namespace DAL
                     da.Update(ds);
                 }
             }
-
             catch (Exception ex)
             {
                 GenericExceptionHandler(ex);
             }
             finally
             {
-                //if (!IsInTransaction())
-                //{
-                //    cn.Close();
-                //    cn.Dispose();
-                //}
-                if (insertSQL != "")
-                {
-                    da.InsertCommand.Parameters.Clear();
-                    da.InsertCommand.Dispose();
-                }
-                if (updateSQL != "")
-                {
-                    da.UpdateCommand.Parameters.Clear();
-                    da.UpdateCommand.Dispose();
-                }
-                if (deleteSQL != "")
-                {
-                    da.DeleteCommand.Parameters.Clear();
-                    da.DeleteCommand.Dispose();
-                }
-                ((IDisposable)da).Dispose();
+                SafeDisposeCommand(da.InsertCommand);
+                SafeDisposeCommand(da.UpdateCommand);
+                SafeDisposeCommand(da.DeleteCommand);
+                (da as IDisposable)?.Dispose();
             }
         }
 
+        private void SafeDisposeCommand(IDbCommand cmd)
+        {
+            if (cmd == null) return;
+            try { cmd.Parameters.Clear(); } catch { /* ignore */ }
+            cmd.Dispose();
+        }
 
-        // To be used for getting single values. like Average, Sum etc from the DB
         public static object ExecScalarS(string strSQL, CommandType cmdType = CommandType.Text)
         {
-            DataAccess dal = new DataAccess();
-            return dal.ExecScalar(strSQL, cmdType, null/* TODO Change to default(_) if this is not a reference type */);
+            using (var dal = new DataAccess())
+            {
+                return dal.ExecScalar(strSQL, cmdType, null);
+            }
         }
+
         public static int ExecScalarInteger(string strSQL, CommandType cmdType = CommandType.Text, int intDefault = 0)
         {
-            DataAccess dal = new DataAccess();
-            object obj = dal.ExecScalar(strSQL, cmdType, null);
-            return (obj != null && obj != DBNull.Value) ? Convert.ToInt32(obj) : intDefault;
-
+            using (var dal = new DataAccess())
+            {
+                object obj = dal.ExecScalar(strSQL, cmdType, null);
+                return (obj != null && obj != DBNull.Value) ? Convert.ToInt32(obj) : intDefault;
+            }
         }
+
         public static double ExecScalarDouble(string strSQL, CommandType cmdType = CommandType.Text, double dblDefault = 0)
         {
-            DataAccess dal = new DataAccess();
-            object obj = dal.ExecScalar(strSQL, cmdType, null);
-            return (obj != null && obj != DBNull.Value) ? Convert.ToDouble(obj) : dblDefault;
+            using (var dal = new DataAccess())
+            {
+                object obj = dal.ExecScalar(strSQL, cmdType, null);
+                return (obj != null && obj != DBNull.Value) ? Convert.ToDouble(obj) : dblDefault;
+            }
         }
-        //public static double ExecScalarDateTime(string strSQL, CommandType cmdType = CommandType.Text)
-        //{
-        //    DataAccess dal = new DataAccess();
-        //    object obj = dal.ExecScalar(strSQL, cmdType, null);
-        //    return (obj != null && obj != DBNull.Value) ? .ToDouble(obj) : dblDefault;
-        //}
+        public static string ExecScalarString(string strSQL, CommandType cmdType = CommandType.Text, string strDefault = "")
+        {
+            using (var dal = new DataAccess())
+            {
+                object obj = dal.ExecScalar(strSQL, cmdType, null);
+                return (obj != null && obj != DBNull.Value) ? Convert.ToString(obj) : strDefault;
+            }
+        }
         public object ExecScalar(string strSQL, CommandType cmdtype = CommandType.Text, ParamStruct[] parameterArray = null)
         {
+            EnsureNotDisposed();
             try
             {
-                string strconn = GetConnectionString;
-                using (IDbConnection conn = ProviderFactory.GetConnection(strconn, Provider))
+                using (IDbConnection conn = ProviderFactory.GetConnection(GetConnectionString, Provider))
+                using (IDbCommand cmd = ProviderFactory.GetCommand(strSQL, cmdtype, CmdTimeout, parameterArray, Provider))
                 {
-                    using (IDbCommand cmd = ProviderFactory.GetCommand(strSQL, cmdtype, CmdTimeout, parameterArray, Provider))
-                    {
-                        cmd.Connection = conn;
-                        conn.Open();
-                        return cmd.ExecuteScalar();
-                    }
+                    cmd.Connection = conn;
+                    conn.Open();
+                    return cmd.ExecuteScalar();
                 }
-
             }
             catch (Exception ex)
             {
                 GenericExceptionHandler(ex);
-            }
-            finally
-            {
-
-
-            }
-            return null;
-        }
-
-        //public object ExecScalar(string strSQL, CommandType cmdtype = CommandType.Text)
-        //{
-        //    return ExecScalar(strSQL, cmdtype, null/* TODO Change to default(_) if this is not a reference type */);
-        //}
-
-
-        // To be used for getting single values. like Average, Sum etc from the DB
-
-        public DataTable GetShema(string strSQL)
-        {
-            try
-            {
-                //using (IDbConnection objConnection = GetConnection()) { 
-                //    objConnection.Open();
-                //    DataTable tab = objConnection.GetSchema(strSQL);
-                //    objConnection.Close();
-                //    return tab;
-                //}
                 return null;
             }
+        }
+
+        public DataTable GetShema(string collectionName)
+        {
+            EnsureNotDisposed();
+            try
+            {
+                using (DbConnection dbConn = (DbConnection)GetConnection())
+                {
+                    dbConn.Open();
+                    return dbConn.GetSchema(collectionName);
+                }
+            }
             catch (Exception ex)
             {
                 GenericExceptionHandler(ex);
-                return null/* TODO Change to default(_) if this is not a reference type */;
+                return null;
             }
         }
+
         public DataTable GetShemaTable()
         {
-            return GetShema("tables");
+            return GetShema("Tables");
         }
-        // This can be used to execute an SP and get an array of output params from it
+
         public ArrayList ExecPreparedSQL(string strSQL, CommandType cmdtype, ParamStruct[] parameterArray)
         {
-
-            IDbConnection conn = null/* TODO Change to default(_) if this is not a reference type */;
-            ArrayList alParams = new ArrayList();
+            EnsureNotDisposed();
+            IDbConnection conn = null;
+            var alParams = new ArrayList();
             try
             {
                 using (IDbCommand cmd = ProviderFactory.GetCommand(strSQL, cmdtype, CmdTimeout, parameterArray, Provider))
                 {
                     PrepareAll(cmd, ref conn, strSQL, cmdtype, parameterArray);
                     cmd.ExecuteNonQuery();
-                    //IDbDataParameter iParam;
                     foreach (IDbDataParameter iParam in cmd.Parameters)
                     {
-                        if (iParam.Direction == ParameterDirection.Output | iParam.Direction == ParameterDirection.InputOutput)
+                        if (iParam.Direction == ParameterDirection.Output || iParam.Direction == ParameterDirection.InputOutput)
                             alParams.Add(iParam.Value);
                     }
                     return alParams;
@@ -1187,139 +888,168 @@ namespace DAL
             catch (Exception ex)
             {
                 GenericExceptionHandler(ex);
+                return null;
             }
             finally
             {
-                if (!IsInTransaction())
+                if (!IsInTransaction() && conn != null)
                 {
-                    if (conn.State != ConnectionState.Closed)
-                        conn.Close();
+                    try
+                    {
+                        if (conn.State != ConnectionState.Closed)
+                            conn.Close();
+                    }
+                    catch { /* ignore */ }
                     conn.Dispose();
                 }
-
             }
-            return null/* TODO Change to default(_) if this is not a reference type */;
         }
 
-
-        // There should be one hanlder for each supported provider.
-        // This is a template and more error handling code should come into place
         private void GenericExceptionHandler(Exception ex)
         {
-            try
-            {
-                if (ex is SqlException)
-                    SQLExceptionHandler((SqlException)ex);
-                else if (ex is OleDbException)
-                    OLEDBExceptionHandler((OleDbException)ex);
-                else if (ex is OdbcException)
-                    ODBCExceptionHandler((OdbcException)ex);
-                else if (ex is SQLiteException)
-                    SQLiteExceptionHandler((SQLiteException)ex);
-                else if (ex is MySqlException)
-                    MySqlExceptionHandler((MySqlException)ex);
-                else if (ex is NpgsqlException)
-                    NpgsqlExceptionHandler((NpgsqlException)ex);
-                else // parece que falta el de oracle ??
-                    throw ex;
-            }
-            catch (Exception)
-            {
-                throw ex;
-            }
+            if (ex is SqlException) SQLExceptionHandler((SqlException)ex);
+            else if (ex is OleDbException) OLEDBExceptionHandler((OleDbException)ex);
+            else if (ex is OdbcException) ODBCExceptionHandler((OdbcException)ex);
+            else if (ex is SQLiteException) SQLiteExceptionHandler((SQLiteException)ex);
+            else if (ex is MySqlException) MySqlExceptionHandler((MySqlException)ex);
+            else if (ex is NpgsqlException) NpgsqlExceptionHandler((NpgsqlException)ex);
+            else if (ex is OracleException) OracleExceptionHandler((OracleException)ex);
+            else ExceptionDispatchInfo.Capture(ex).Throw();
+        }
 
+        private void BuildErrorMessage(StringBuilder sb, string message, string source, string server = null)
+        {
+            sb.AppendFormat("Error: {0}{1}", message, Environment.NewLine);
+            if (!string.IsNullOrEmpty(server))
+                sb.AppendFormat("Server: {0}{1}", server, Environment.NewLine);
+            sb.AppendFormat("Source: {0}{1}", source, Environment.NewLine);
+            sb.AppendLine("-----------------------------------------------");
         }
 
         private void SQLExceptionHandler(SqlException ex)
         {
-
-            StringBuilder sb = new StringBuilder();
-            if (ex.Errors.Count > 1)
+            var sb = new StringBuilder();
+            foreach (SqlError sqlerr in ex.Errors)
             {
-                foreach (SqlException sqlerr in ex.Errors)
-                {
-                    sb.AppendFormat("Error: {0}{1}", sqlerr.Message, Environment.NewLine);
-                    sb.AppendFormat("Server: {0}{1}", sqlerr.Server, Environment.NewLine);
-                    sb.AppendFormat("Source: {0}{1}", sqlerr.Source, Environment.NewLine);
-                    sb.Append("-----------------------------------------------");
-                }
+                BuildErrorMessage(sb, sqlerr.Message, sqlerr.Source, sqlerr.Server);
             }
-            else
-            {
-                sb.AppendFormat("Error: {0}{1}", ex.Message, Environment.NewLine);
-                sb.AppendFormat("Server: {0}{1}", ex.Server, Environment.NewLine);
-                sb.AppendFormat("Source: {0}{1}", ex.Source, Environment.NewLine);
-                sb.Append("----------------------------------------------");
-            }
-            // TODO For each custom sql server error have an entry
             throw new Exception(sb.ToString(), ex);
         }
 
         private void OLEDBExceptionHandler(OleDbException ex)
         {
-
-            StringBuilder sb = new StringBuilder();
+            var sb = new StringBuilder();
             foreach (OleDbError oledberr in ex.Errors)
             {
-                sb.AppendFormat("Error: {0}{1}", oledberr.Message, Environment.NewLine);
-                sb.AppendFormat("Source: {0}{1}", oledberr.Source, Environment.NewLine);
-                sb.Append("-----------------------------------------------");
+                BuildErrorMessage(sb, oledberr.Message, oledberr.Source);
             }
-            // TODO For each custom sql server error have an entry
             throw new Exception(sb.ToString(), ex);
         }
 
         private void ODBCExceptionHandler(OdbcException ex)
         {
-
-            StringBuilder sb = new StringBuilder();
+            var sb = new StringBuilder();
             foreach (OdbcError odbcerr in ex.Errors)
             {
-                sb.AppendFormat("Error: {0}{1}", odbcerr.Message, Environment.NewLine);
-                sb.AppendFormat("Source: {0}{1}", odbcerr.Source, Environment.NewLine);
-                sb.Append("-----------------------------------------------");
+                BuildErrorMessage(sb, odbcerr.Message, odbcerr.Source);
             }
-            // TODO For each custom sql server error have an entry
             throw new Exception(sb.ToString(), ex);
         }
+
         private void SQLiteExceptionHandler(SQLiteException ex)
         {
-            // Dim odbcerr As SQLiteErrorCode
-
-            StringBuilder sb = new StringBuilder();
-            // For Each odbcerr In ex.
-            sb.AppendFormat("SQLite Error: {0}{1}", ex.Message, Environment.NewLine);
-            sb.AppendFormat("Source: {0}{1}", ex.Source, Environment.NewLine);
-            sb.Append("-----------------------------------------------");
-            // Next
-            // TODO For each custom sql server error have an entry
+            var sb = new StringBuilder();
+            BuildErrorMessage(sb, ex.Message, ex.Source);
             throw new Exception(sb.ToString(), ex);
         }
+
         private void MySqlExceptionHandler(MySqlException ex)
         {
-            // Dim odbcerr As SQLiteErrorCode
-
-            StringBuilder sb = new StringBuilder();
-            // For Each odbcerr In ex.
-            sb.AppendFormat("MySql Error: {0}{1}", ex.Message, Environment.NewLine);
-            sb.AppendFormat("Source: {0}{1}", ex.Source, Environment.NewLine);
-            sb.Append("-----------------------------------------------");
-            // Next
-            // TODO For each custom sql server error have an entry
+            var sb = new StringBuilder();
+            BuildErrorMessage(sb, ex.Message, ex.Source);
             throw new Exception(sb.ToString(), ex);
         }
+
         private void NpgsqlExceptionHandler(NpgsqlException ex)
         {
-            // Dim odbcerr As SQLiteErrorCode
-
-            StringBuilder sb = new StringBuilder();
-            // For Each odbcerr In ex.
-            sb.AppendFormat("Pgsql Error: {0}{1}", ex.Message, Environment.NewLine);
-            sb.AppendFormat("Source: {0}{1}", ex.Source, Environment.NewLine);
-            sb.Append("-----------------------------------------------");
-            // Next
-            // TODO For each custom sql server error have an entry
+            var sb = new StringBuilder();
+            BuildErrorMessage(sb, ex.Message, ex.Source);
             throw new Exception(sb.ToString(), ex);
+        }
+
+        private void OracleExceptionHandler(OracleException ex)
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < ex.Errors.Count; i++)
+            {
+                var err = ex.Errors[i];
+                BuildErrorMessage(sb, err.Message, err.Source);
+            }
+            throw new Exception(sb.ToString(), ex);
+        }
+
+        public async Task<DataSet> ExecDataSetAsync(string strSQL, CommandType cmdtype = CommandType.Text, ParamStruct[] parameterArray = null)
+        {
+            EnsureNotDisposed();
+            var ds = new DataSet("DataSet");
+            try
+            {
+                using (var conn = (DbConnection)ProviderFactory.GetConnection(GetConnectionString, Provider))
+                using (var cmd = (DbCommand)ProviderFactory.GetCommand(strSQL, cmdtype, CmdTimeout, parameterArray, Provider))
+                {
+                    cmd.Connection = conn;
+                    await conn.OpenAsync();
+                    var da = (DbDataAdapter)ProviderFactory.GetAdapter(Provider);
+                    da.SelectCommand = cmd;
+                    await Task.Run(() => da.Fill(ds));
+                    return ds;
+                }
+            }
+            catch (Exception ex)
+            {
+                GenericExceptionHandler(ex);
+                return ds;
+            }
+        }
+
+        public async Task<int> ExecNonQueryAsync(string strSQL, CommandType cmdtype = CommandType.Text, ParamStruct[] parameterArray = null)
+        {
+            EnsureNotDisposed();
+            try
+            {
+                using (var conn = (DbConnection)ProviderFactory.GetConnection(GetConnectionString, Provider))
+                using (var cmd = (DbCommand)ProviderFactory.GetCommand(strSQL, cmdtype, CmdTimeout, parameterArray, Provider))
+                {
+                    cmd.Connection = conn;
+                    await conn.OpenAsync();
+                    return await cmd.ExecuteNonQueryAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                GenericExceptionHandler(ex);
+                return -1;
+            }
+        }
+
+        public async Task<object> ExecScalarAsync(string strSQL, CommandType cmdtype = CommandType.Text, ParamStruct[] parameterArray = null)
+        {
+            EnsureNotDisposed();
+            try
+            {
+                using (var conn = (DbConnection)ProviderFactory.GetConnection(GetConnectionString, Provider))
+                using (var cmd = (DbCommand)ProviderFactory.GetCommand(strSQL, cmdtype, CmdTimeout, parameterArray, Provider))
+                {
+                    cmd.Connection = conn;
+                    await conn.OpenAsync();
+                    return await cmd.ExecuteScalarAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                GenericExceptionHandler(ex);
+                return null;
+            }
         }
     }
 }
